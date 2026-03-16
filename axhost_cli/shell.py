@@ -109,7 +109,7 @@ class AxHostShell:
         """注册命令"""
         # 全局命令
         self._add_cmd("host", self.cmd_host, "设置或查看服务器地址", "/host [url]", ["/host http://localhost:8000"], CommandMode.GLOBAL)
-        self._add_cmd("login", self.cmd_login, "浏览器自动登录", "/login", ["/login"], CommandMode.GLOBAL)
+        self._add_cmd("login", self.cmd_login, "登录 (浏览器或账号密码)", "/login [--password]", ["/login", "/login --password"], CommandMode.GLOBAL)
         self._add_cmd("logout", self.cmd_logout, "退出登录", "/logout", ["/logout"], CommandMode.BOTH)
         self._add_cmd("use", self.cmd_use, "搜索并进入项目 Session", "/use [name]", ["/use 官网", "/use"], CommandMode.GLOBAL)
         self._add_cmd("create", self.cmd_create, "交互式创建新项目", "/create", ["/create"], CommandMode.GLOBAL)
@@ -198,12 +198,15 @@ class AxHostShell:
     
     async def execute(self, text: str):
         """执行命令"""
+        import os
+        
         text = text.strip()
         if not text:
             return
         
         # 解析命令
-        parts = shlex.split(text)
+        # Windows 上使用 posix=False，避免反斜杠被当作转义字符
+        parts = shlex.split(text, posix=os.name == 'posix')
         cmd_name = parts[0].lstrip('/').lower()
         args = parts[1:]
         
@@ -272,14 +275,62 @@ class AxHostShell:
                 print_info("已取消")
     
     async def cmd_login(self, args: List[str]):
-        """浏览器登录"""
-        self.console.print("[dim]· 打开浏览器进行登录...[/dim]")
-        result = await self.auth.login_with_browser()
+        """登录命令：支持浏览器登录或账号密码登录"""
+        # 检查是否使用密码登录
+        use_password = "-p" in args or "--password" in args
         
-        if result.success:
-            print_success(f"登录成功，欢迎 {result.user.name}")
+        if use_password:
+            # 账号密码登录
+            await self._login_with_password()
         else:
-            print_error(result.error_message or "登录失败")
+            # 浏览器登录
+            self.console.print("[dim]· 打开浏览器进行登录...[/dim]")
+            result = await self.auth.login_with_browser()
+            
+            if result.success:
+                print_success(f"登录成功，欢迎 {result.user.name}")
+            else:
+                print_error(result.error_message or "登录失败")
+    
+    async def _login_with_password(self):
+        """交互式账号密码登录"""
+        import asyncio
+        import getpass
+        from prompt_toolkit import PromptSession
+        
+        try:
+            # 输入工号/账号
+            session = PromptSession()
+            employee_id = await session.prompt_async("工号/账号: ")
+            
+            if not employee_id.strip():
+                print_warning("账号不能为空")
+                return
+            
+            # 输入密码（隐藏输入）- 使用 getpass 在后台线程运行
+            self.console.print("密码: ", end="")
+            password = await asyncio.to_thread(getpass.getpass, "")
+            
+            if not password:
+                print_warning("密码不能为空")
+                return
+            
+            # 执行登录
+            with self.console.status("[bold green]正在登录..."):
+                result = await self.auth.login_with_credentials(
+                    employee_id.strip(), 
+                    password
+                )
+            
+            if result.success:
+                print_success(f"登录成功，欢迎 {result.user.name}")
+            else:
+                print_error(result.error_message or "登录失败")
+                
+        except KeyboardInterrupt:
+            print_info("\n已取消登录")
+        except Exception as e:
+            print_error(f"登录失败: {e}")
     
     async def cmd_logout(self, args: List[str]):
         """退出登录"""

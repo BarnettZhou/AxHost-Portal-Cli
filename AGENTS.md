@@ -63,6 +63,7 @@ axhost_cli/              # 主包目录
 ### 全局命令
 - `/host <url>` - 设置服务器地址
 - `/login` - 浏览器自动登录
+- `/login --password` 或 `/login -p` - 使用账号密码登录（交互式输入）
 - `/use [name]` - 搜索并进入项目 Session
 - `/create` - 交互式创建新项目
 - `/projects` - 交互式项目列表
