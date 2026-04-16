@@ -71,7 +71,7 @@ axhost> /sync-all
 | 命令 | 功能 |
 |------|------|
 | `/host <url>` | 设置服务器地址 |
-| `/login` | 浏览器自动登录 |
+| `/login` | 浏览器自动登录（`--password` / `-p` 账号密码登录） |
 | `/logout` | 退出登录 |
 | `/use [name]` | 搜索/浏览并进入项目 Session |
 | `/create` | 交互式创建新项目 |

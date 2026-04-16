@@ -12,7 +12,7 @@ class CommandCompleter(Completer):
     # 全局命令: (名称, 描述)
     GLOBAL_COMMANDS = [
         ("host", "设置或查看服务器地址"),
-        ("login", "浏览器自动登录"),
+        ("login", "浏览器自动登录 或 /login --password/-p 账号密码登录"),
         ("logout", "退出登录"),
         ("use", "搜索并进入项目 Session"),
         ("create", "交互式创建新项目"),

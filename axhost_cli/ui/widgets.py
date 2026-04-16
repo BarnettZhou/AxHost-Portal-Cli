@@ -109,8 +109,10 @@ def create_project_detail_panel(project, linked_dir: Optional[str] = None) -> Pa
     text.append(f"    ID:         {project.object_id}\n")
     text.append(f"    名称:       {project.name}\n")
     text.append(f"    作者:       {project.author_name}\n")
-    text.append(f"    创建时间:   {project.created_at.strftime('%Y-%m-%d %H:%M')}\n")
-    text.append(f"    最后修改:   {project.updated_at.strftime('%Y-%m-%d %H:%M')}\n")
+    created_str = project.created_at.strftime('%Y-%m-%d %H:%M') if project.created_at else "未知"
+    updated_str = project.updated_at.strftime('%Y-%m-%d %H:%M') if project.updated_at else "未知"
+    text.append(f"    创建时间:   {created_str}\n")
+    text.append(f"    最后修改:   {updated_str}\n")
     
     text.append("\n  访问设置:\n", style="bold")
     text.append(f"    公开访问:   {'是' if project.is_public else '否'}\n")

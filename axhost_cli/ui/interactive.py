@@ -1,16 +1,45 @@
 """交互式组件"""
 
 import asyncio
+import os
 import sys
 from typing import Callable, List, Optional, TypeVar
 
 from prompt_toolkit import PromptSession
+from prompt_toolkit.key_binding import KeyBindings
 from rich.console import Console
 from rich.table import Table
+from rich.text import Text
 
 from ..models import Project, Tag
 
 T = TypeVar("T")
+
+
+def clear_screen():
+    """清屏 - 跨平台兼容"""
+    if sys.platform == 'win32':
+        os.system('cls')
+    else:
+        os.system('clear')
+
+
+def display_width(s: str) -> int:
+    """计算字符串的显示宽度（处理中英文混合）"""
+    width = 0
+    for char in s:
+        # 中文字符和全角字符宽度为2
+        if '\u4e00' <= char <= '\u9fff' or ord(char) > 127:
+            width += 2
+        else:
+            width += 1
+    return width
+
+
+def pad_to_width(s: str, width: int) -> str:
+    """将字符串填充到指定显示宽度"""
+    current_width = display_width(s)
+    return s + ' ' * (width - current_width)
 
 
 class InteractiveList:
@@ -44,36 +73,27 @@ class InteractiveList:
         search = ""
         filtered_items = items.copy()
         
-        # 清除屏幕
-        self.console.clear()
+        # 清屏开始
+        clear_screen()
         
         while True:
             # 计算分页
             total_pages = max(1, (len(filtered_items) + self.page_size - 1) // self.page_size)
             start = page * self.page_size
-            end = start + self.page_size
-            page_items = filtered_items[start:end]
+            page_items = filtered_items[start:start + self.page_size]
             
-            # 清除并重新显示
-            self.console.clear()
+            # 构建显示内容
+            output = self._build_display(page_items, selected - start, title, len(filtered_items), page + 1, total_pages, search)
             
-            # 渲染并显示表格
-            table = self._render_table(page_items, selected - start, title, len(filtered_items), page + 1, total_pages, search)
-            self.console.print(table)
+            # 打印到 stderr 避免与输入冲突，或使用标准输出
+            print(output, end='')
+            sys.stdout.flush()
             
-            # 显示操作提示（使用 Text 对象避免解析问题）
-            from rich.text import Text
-            hint = Text()
-            hint.append("\n")
-            hint.append("[↑↓/jk]选择 ", style="dim")
-            hint.append("[Enter]进入 ", style="dim")
-            hint.append("[/]搜索 ", style="dim")
-            hint.append("[n/p]翻页 ", style="dim")
-            hint.append("[q]退出", style="dim")
-            self.console.print(hint)
-            
-            # 读取单个按键
+            # 读取按键
             key = await self._read_key()
+            
+            # 清屏准备下一次渲染
+            clear_screen()
             
             if key == "UP" or key == "k":
                 selected = max(0, selected - 1)
@@ -96,7 +116,7 @@ class InteractiveList:
                     selected = page * self.page_size
             
             elif key == "/":
-                # 进入搜索模式
+                print()  # 换行避免覆盖
                 search = await self._prompt_search()
                 if search:
                     filtered_items = [p for p in items if search.lower() in p.name.lower()]
@@ -104,15 +124,17 @@ class InteractiveList:
                     filtered_items = items.copy()
                 page = 0
                 selected = 0
+                clear_screen()
             
             elif key == "ENTER":
                 if 0 <= selected < len(filtered_items):
                     return filtered_items[selected]
+                return None
             
             elif key == "q" or key == "ESC" or key == "CTRL_C":
                 return None
     
-    def _render_table(
+    def _build_display(
         self,
         items: List[Project],
         selected: int,
@@ -121,126 +143,123 @@ class InteractiveList:
         page: int,
         total_pages: int,
         search: str
-    ) -> Table:
-        """渲染表格"""
-        # 创建主表格
-        table = Table(show_header=True, header_style="bold")
-        table.add_column("", width=3)
-        table.add_column("ID", width=10)
-        table.add_column("名称", width=25)
-        table.add_column("作者", width=10)
-        table.add_column("更新时间", width=12)
-        table.add_column("标签", width=15)
+    ) -> str:
+        """构建显示文本（简单文本表格，处理中文对齐）"""
+        lines = []
         
+        # 标题
+        if search:
+            lines.append(f"\n{title} (搜索: '{search}')")
+        else:
+            lines.append(f"\n{title}")
+        
+        lines.append(f"第 {page}/{total_pages} 页 | 共 {total} 个项目")
+        lines.append("")
+        
+        # 表头
+        lines.append(f"{'':3} {pad_to_width('ID', 10)} {pad_to_width('名称', 25)} {pad_to_width('作者', 10)} {pad_to_width('更新时间', 12)} {'标签'}")
+        lines.append("-" * 80)
+        
+        # 数据行
         for i, project in enumerate(items):
-            marker = "🞂" if i == selected else " "
-            tags = ", ".join(f"{t.emoji}" for t in project.tags[:3])
-            table.add_row(
-                marker,
-                project.object_id[:8],
-                project.name[:24],
-                project.author_name[:8],
-                project.updated_at.strftime("%m-%d %H:%M"),
-                tags
-            )
+            marker = ">>>" if i == selected else "   "
+            tags = " ".join(f"{t.emoji}" for t in project.tags[:3])
+            updated = project.updated_at.strftime("%m-%d %H:%M") if project.updated_at else "未知"
+            
+            # 截断名称到显示宽度24
+            name = project.name
+            if display_width(name) > 24:
+                # 截断到21宽度，加省略号(占1宽度)，总共不超过22
+                truncated = ""
+                width = 0
+                for char in name:
+                    char_width = 2 if ('\u4e00' <= char <= '\u9fff' or ord(char) > 127) else 1
+                    if width + char_width > 21:  # 留1宽度给省略号
+                        break
+                    truncated += char
+                    width += char_width
+                name = truncated + ".."  # 使用两个英文点，宽度确定为2
+            
+            lines.append(f"{marker} {pad_to_width(project.object_id[:8], 9)} {pad_to_width(name, 25)} {pad_to_width(project.author_name[:8], 10)} {pad_to_width(updated, 12)} {tags}")
         
-        return table
+        # 填充空行保持高度一致
+        for _ in range(self.page_size - len(items)):
+            lines.append("")
+        
+        # 操作提示
+        lines.append("")
+        lines.append("[↑↓/jk]选择 [Enter]进入 [/]搜索 [n/p]翻页 [q]退出")
+        lines.append("")
+        
+        return "\n".join(lines)
     
     async def _read_key(self) -> str:
         """读取单个按键"""
-        try:
-            import msvcrt  # Windows
-            if msvcrt.kbhit():
-                ch = msvcvt.getch()
-                if ch == b'\r':
-                    return "ENTER"
-                elif ch == b'\x1b':
-                    return "ESC"
-                elif ch == b'q':
-                    return "q"
-                elif ch == b'j':
-                    return "j"
-                elif ch == b'k':
-                    return "k"
-                elif ch == b'n':
-                    return "n"
-                elif ch == b'p':
-                    return "p"
-                elif ch == b'/':
-                    return "/"
-                return ch.decode('utf-8', errors='ignore')
-        except ImportError:
-            pass
-        
-        # 使用 prompt_toolkit 读取
-        from prompt_toolkit import PromptSession
-        from prompt_toolkit.key_binding import KeyBindings
-        
         bindings = KeyBindings()
         result = None
         
         @bindings.add('up')
-        def _(event):
+        def up_handler(event):
             nonlocal result
             result = "UP"
             event.app.exit()
         
         @bindings.add('down')
-        def _(event):
+        def down_handler(event):
             nonlocal result
             result = "DOWN"
             event.app.exit()
         
         @bindings.add('enter')
-        def _(event):
+        def enter_handler(event):
             nonlocal result
             result = "ENTER"
             event.app.exit()
         
         @bindings.add('q')
-        def _(event):
+        def q_handler(event):
             nonlocal result
             result = "q"
             event.app.exit()
         
         @bindings.add('j')
-        def _(event):
+        def j_handler(event):
             nonlocal result
             result = "j"
             event.app.exit()
         
         @bindings.add('k')
-        def _(event):
+        def k_handler(event):
             nonlocal result
             result = "k"
             event.app.exit()
         
         @bindings.add('n')
-        def _(event):
+        def n_handler(event):
             nonlocal result
             result = "n"
             event.app.exit()
         
         @bindings.add('p')
-        def _(event):
+        def p_handler(event):
             nonlocal result
             result = "p"
             event.app.exit()
         
         @bindings.add('/')
-        def _(event):
+        def search_handler(event):
             nonlocal result
             result = "/"
             event.app.exit()
         
         @bindings.add('escape')
-        def _(event):
+        def esc_handler(event):
             nonlocal result
             result = "ESC"
             event.app.exit()
         
         @bindings.add('c-c')
-        def _(event):
+        def ctrlc_handler(event):
             nonlocal result
             result = "CTRL_C"
             event.app.exit()
@@ -251,9 +270,7 @@ class InteractiveList:
     
     async def _prompt_search(self) -> str:
         """提示搜索输入"""
-        self.console.clear()
-        self.console.print("\n[bold]搜索模式[/bold]")
-        self.console.print("─" * 50)
+        print("\n" + "=" * 50)
         session = PromptSession()
         try:
             result = await session.prompt_async("搜索: ")

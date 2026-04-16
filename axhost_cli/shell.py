@@ -109,7 +109,7 @@ class AxHostShell:
         """注册命令"""
         # 全局命令
         self._add_cmd("host", self.cmd_host, "设置或查看服务器地址", "/host [url]", ["/host http://localhost:8000"], CommandMode.GLOBAL)
-        self._add_cmd("login", self.cmd_login, "登录 (浏览器或账号密码)", "/login [--password]", ["/login", "/login --password"], CommandMode.GLOBAL)
+        self._add_cmd("login", self.cmd_login, "登录 (浏览器或账号密码)", "/login [--password|-p]", ["/login", "/login --password", "/login -p"], CommandMode.GLOBAL)
         self._add_cmd("logout", self.cmd_logout, "退出登录", "/logout", ["/logout"], CommandMode.BOTH)
         self._add_cmd("use", self.cmd_use, "搜索并进入项目 Session", "/use [name]", ["/use 官网", "/use"], CommandMode.GLOBAL)
         self._add_cmd("create", self.cmd_create, "交互式创建新项目", "/create", ["/create"], CommandMode.GLOBAL)
@@ -188,12 +188,10 @@ class AxHostShell:
         updated = self.config.get_last_sync(self.current_project.object_id)
         updated_str = format_time(updated) if updated else "从未"
         
-        session_cmds = [cmd.name for cmd in self.commands.values() if cmd.mode in (CommandMode.SESSION, CommandMode.BOTH)]
-        
         # 简洁的文本显示，不使用 Panel（转义变量中的特殊字符）
         self.console.print()
         self.console.print(f"[dim]Session:[/dim] [cyan]{escape(self.current_project.name)}[/cyan] | [dim]关联:[/dim] {escape(linked)} | [dim]更新:[/dim] {escape(updated_str)}")
-        self.console.print(f"[dim]命令:[/dim] {' '.join(f'/{cmd}' for cmd in session_cmds[:8])}")
+        self.console.print(f"[dim]提示:[/dim] 使用 /help 查看可用命令")
         self.console.print()
     
     async def execute(self, text: str):
@@ -226,10 +224,14 @@ class AxHostShell:
         try:
             await cmd.handler(args)
             
-            # Session 模式下自动显示 Session 信息
-            if self.mode == CLIMode.SESSION and cmd_name not in ('info', 'exit', 'quit', 'help'):
+            # Session 模式下自动显示 Session 信息（排除进入 session 的命令，避免重复显示）
+            if self.mode == CLIMode.SESSION and cmd_name not in ('info', 'exit', 'quit', 'help', 'use', 'create', 'projects'):
                 self.console.print()
                 self.show_session_info()
+        except KeyError as e:
+            # 数据解析错误，通常是 API 返回格式不符合预期
+            print_error(f"数据解析失败: {e}")
+            print_info("提示: 可能是 API 返回的数据格式有误，请检查服务器端")
         except Exception as e:
             print_error(f"命令执行失败: {e}")
     
@@ -377,12 +379,17 @@ class AxHostShell:
         creator = InteractiveCreator(self.console)
         data = await creator.run(tags)
         
-        if not data.get("name"):
+        user_input_name = data.get("name", "")
+        if not user_input_name:
             print_error("项目名称不能为空")
             return
         
         with self.console.status("[bold green]创建项目..."):
             project = await self.project_service.create_project(**data)
+        
+        # 如果后端返回的名称缺失或是默认占位符，使用用户输入的名称
+        if not project.name or project.name == "未命名项目":
+            project.name = user_input_name
         
         print_success(f"项目创建成功: {project.name} ({project.object_id})")
         
